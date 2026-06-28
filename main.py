@@ -27,10 +27,8 @@ class InvoiceResponse(BaseModel):
 @app.post("/extract", response_model=InvoiceResponse)
 def extract_invoice(request: InvoiceRequest):
     text = (request.text or "").strip()
-
     if not text:
         return InvoiceResponse(vendor="Unknown", amount=0.0, currency="USD", date="1970-01-01")
-
     prompt = f"""Extract invoice details from the text below.
 Return ONLY a JSON object with exactly these keys:
 - vendor: the vendor/company name as a string
@@ -42,18 +40,17 @@ Invoice text:
 {text}
 
 Respond with ONLY the JSON object, no explanation, no markdown, no backticks."""
-
     try:
         response = model.generate_content(prompt)
         raw = response.text.strip()
         raw = re.sub(r"```[a-z]*", "", raw).strip("` \n")
         data = json.loads(raw)
-
         return InvoiceResponse(
             vendor=str(data.get("vendor", "Unknown")),
             amount=float(data.get("amount", 0.0)),
             currency=str(data.get("currency", "USD")).upper(),
             date=str(data.get("date", "1970-01-01"))
         )
-    except Exception:
+    except Exception as e:
+        print(f"ERROR: {e}")
         return InvoiceResponse(vendor="Unknown", amount=0.0, currency="USD", date="1970-01-01")
