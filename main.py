@@ -1,0 +1,82 @@
+import os
+import json
+import re
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, field_validator
+import anthropic
+
+app = FastAPI()
+
+# --- Request and Response Models ---
+
+class InvoiceRequest(BaseModel):
+    text: str = ""
+
+class InvoiceResponse(BaseModel):
+    vendor: str
+    amount: float
+    currency: str
+    date: str
+
+    @field_validator("currency")
+    @classmethod
+    def currency_uppercase(cls, v):
+        return v.upper()
+
+# --- The /extract endpoint ---
+
+@app.post("/extract", response_model=InvoiceResponse)
+def extract_invoice(request: InvoiceRequest):
+    text = (request.text or "").strip()
+
+    # If empty/garbage, return safe defaults
+    if not text:
+        return InvoiceResponse(
+            vendor="Unknown",
+            amount=0.0,
+            currency="USD",
+            date="1970-01-01"
+        )
+
+    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+
+    prompt = f"""Extract invoice details from the text below.
+Return ONLY a JSON object with exactly these keys:
+- vendor: the vendor/company name as a string
+- amount: the total amount due as a number (no currency symbol)
+- currency: 3-letter uppercase currency code (e.g. USD, EUR, GBP)
+- date: the payment due date in YYYY-MM-DD format
+
+Invoice text:
+{text}
+
+Respond with ONLY the JSON object, no explanation, no markdown, no backticks."""
+
+    try:
+        message = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=256,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        raw = message.content[0].text.strip()
+
+        # Strip markdown fences if present
+        raw = re.sub(r"```[a-z]*", "", raw).strip("` \n")
+
+        data = json.loads(raw)
+
+        return InvoiceResponse(
+            vendor=str(data.get("vendor", "Unknown")),
+            amount=float(data.get("amount", 0.0)),
+            currency=str(data.get("currency", "USD")).upper(),
+            date=str(data.get("date", "1970-01-01"))
+        )
+
+    except Exception:
+        return InvoiceResponse(
+            vendor="Unknown",
+            amount=0.0,
+            currency="USD",
+            date="1970-01-01"
+        )
