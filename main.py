@@ -55,5 +55,6 @@ Respond with ONLY the JSON object, no explanation, no markdown, no backticks."""
             currency=str(data.get("currency", "USD")).upper(),
             date=str(data.get("date", "1970-01-01"))
         )
-    except Exception:
+    except Exception as e:
+        print(f"ERROR: {e}")
         return InvoiceResponse(vendor="Unknown", amount=0.0, currency="USD", date="1970-01-01")
