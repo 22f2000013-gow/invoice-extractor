@@ -2,13 +2,13 @@ import os
 import json
 import re
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
-import anthropic
+import google.generativeai as genai
+
+genai.configure(api_key=os.environ["GEMINI_API_KEY"])
+model = genai.GenerativeModel("gemini-1.5-flash")
 
 app = FastAPI()
-
-# --- Request and Response Models ---
 
 class InvoiceRequest(BaseModel):
     text: str = ""
@@ -24,22 +24,12 @@ class InvoiceResponse(BaseModel):
     def currency_uppercase(cls, v):
         return v.upper()
 
-# --- The /extract endpoint ---
-
 @app.post("/extract", response_model=InvoiceResponse)
 def extract_invoice(request: InvoiceRequest):
     text = (request.text or "").strip()
 
-    # If empty/garbage, return safe defaults
     if not text:
-        return InvoiceResponse(
-            vendor="Unknown",
-            amount=0.0,
-            currency="USD",
-            date="1970-01-01"
-        )
-
-    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+        return InvoiceResponse(vendor="Unknown", amount=0.0, currency="USD", date="1970-01-01")
 
     prompt = f"""Extract invoice details from the text below.
 Return ONLY a JSON object with exactly these keys:
@@ -54,16 +44,9 @@ Invoice text:
 Respond with ONLY the JSON object, no explanation, no markdown, no backticks."""
 
     try:
-        message = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=256,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        raw = message.content[0].text.strip()
-
-        # Strip markdown fences if present
+        response = model.generate_content(prompt)
+        raw = response.text.strip()
         raw = re.sub(r"```[a-z]*", "", raw).strip("` \n")
-
         data = json.loads(raw)
 
         return InvoiceResponse(
@@ -72,11 +55,5 @@ Respond with ONLY the JSON object, no explanation, no markdown, no backticks."""
             currency=str(data.get("currency", "USD")).upper(),
             date=str(data.get("date", "1970-01-01"))
         )
-
     except Exception:
-        return InvoiceResponse(
-            vendor="Unknown",
-            amount=0.0,
-            currency="USD",
-            date="1970-01-01"
-        )
+        return InvoiceResponse(vendor="Unknown", amount=0.0, currency="USD", date="1970-01-01")
