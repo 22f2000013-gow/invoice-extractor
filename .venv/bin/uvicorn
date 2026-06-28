@@ -1,6 +1,0 @@
-#!/mnt/d/Aiitmbspads/May26-TDS/GA2/Q8/invoice-extracter/.venv/bin/python
-import sys
-from uvicorn.main import main
-if __name__ == '__main__':
-    sys.argv[0] = sys.argv[0].removesuffix('.exe')
-    sys.exit(main())
