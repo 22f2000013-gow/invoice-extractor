@@ -1,98 +1,59 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
+import os
+import json
 import re
+from fastapi import FastAPI
+from pydantic import BaseModel, field_validator
+import google.generativeai as genai
+
+genai.configure(api_key=os.environ["GEMINI_API_KEY"])
+model = genai.GenerativeModel("gemini-1.5-flash")
 
 app = FastAPI()
 
-
-# ---------- Request Model ----------
 class InvoiceRequest(BaseModel):
-    text: str
+    text: str = ""
 
-
-# ---------- Response Model ----------
 class InvoiceResponse(BaseModel):
     vendor: str
     amount: float
     currency: str
     date: str
 
+    @field_validator("currency")
+    @classmethod
+    def currency_uppercase(cls, v):
+        return v.upper()
 
 @app.post("/extract", response_model=InvoiceResponse)
-def extract_invoice(data: InvoiceRequest):
-    text = data.text.strip()
+def extract_invoice(request: InvoiceRequest):
+    text = (request.text or "").strip()
 
-    # Handle empty input
     if not text:
+        return InvoiceResponse(vendor="Unknown", amount=0.0, currency="USD", date="1970-01-01")
+
+    prompt = f"""Extract invoice details from the text below.
+Return ONLY a JSON object with exactly these keys:
+- vendor: the vendor/company name as a string
+- amount: the total amount due as a number (no currency symbol)
+- currency: 3-letter uppercase currency code (e.g. USD, EUR, GBP)
+- date: the payment due date in YYYY-MM-DD format
+
+Invoice text:
+{text}
+
+Respond with ONLY the JSON object, no explanation, no markdown, no backticks."""
+
+    try:
+        response = model.generate_content(prompt)
+        raw = response.text.strip()
+        raw = re.sub(r"```[a-z]*", "", raw).strip("` \n")
+        data = json.loads(raw)
+
         return InvoiceResponse(
-            vendor="",
-            amount=0.0,
-            currency="",
-            date=""
+            vendor=str(data.get("vendor", "Unknown")),
+            amount=float(data.get("amount", 0.0)),
+            currency=str(data.get("currency", "USD")).upper(),
+            date=str(data.get("date", "1970-01-01"))
         )
-
-    # ---------------- Vendor ----------------
-    vendor = ""
-
-    # Common pattern: "Invoice from <vendor>"
-    m = re.search(
-        r"Invoice\s+from\s+(.+?)(?:\.|,|\n|Total|Amount|Due|Payment|Date|$)",
-        text,
-        re.IGNORECASE,
-    )
-    if m:
-        vendor = m.group(1).strip()
-
-    # Fallback: first non-empty line
-    if not vendor:
-        lines = [line.strip() for line in text.splitlines() if line.strip()]
-        if lines:
-            vendor = lines[0]
-
-    # ---------------- Currency ----------------
-    currency = ""
-    m = re.search(r"\b(USD|EUR|GBP)\b", text, re.IGNORECASE)
-    if m:
-        currency = m.group(1).upper()
-
-    # ---------------- Amount ----------------
-    amount = 0.0
-
-    # Currency followed by amount
-    m = re.search(
-        r"(?:USD|EUR|GBP)\s*[:\-]?\s*([0-9]+(?:\.[0-9]{1,2})?)",
-        text,
-        re.IGNORECASE,
-    )
-
-    # Amount followed by currency
-    if not m:
-        m = re.search(
-            r"([0-9]+(?:\.[0-9]{1,2})?)\s*(?:USD|EUR|GBP)",
-            text,
-            re.IGNORECASE,
-        )
-
-    # Total/Amount/Due
-    if not m:
-        m = re.search(
-            r"(?:Total|Amount|Due)[^\d]*([0-9]+(?:\.[0-9]{1,2})?)",
-            text,
-            re.IGNORECASE,
-        )
-
-    if m:
-        amount = float(m.group(1))
-
-    # ---------------- Date ----------------
-    date = ""
-    m = re.search(r"\b(2026-\d{2}-\d{2})\b", text)
-    if m:
-        date = m.group(1)
-
-    return InvoiceResponse(
-        vendor=vendor,
-        amount=amount,
-        currency=currency,
-        date=date,
-    )
+    except Exception:
+        return InvoiceResponse(vendor="Unknown", amount=0.0, currency="USD", date="1970-01-01")
